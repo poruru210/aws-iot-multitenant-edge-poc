@@ -1,0 +1,63 @@
+name: build-and-test
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: edge-poc-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+      CDK_DEFAULT_ACCOUNT: '111122223333'
+      CDK_DEFAULT_REGION: ap-northeast-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Go dependencies, tests and vet
+        run: |
+          set -o pipefail
+          go mod tidy
+          go test -race -v ./... | tee go-test.log
+          go vet ./...
+          test -z "$(gofmt -l cmd internal)"
+      - name: Cross-compile device
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/edge-linux-amd64 ./cmd/edge
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/edge-linux-arm64 ./cmd/edge
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/edge-windows-amd64.exe ./cmd/edge
+      - name: CDK typecheck, tests and synthesis (no deployment)
+        working-directory: infra
+        run: |
+          set -o pipefail
+          npm install --no-fund --no-audit
+          npm run build
+          npm test | tee ../infra-test.log
+          npm run synth
+      - name: Preserve test evidence and resolved dependency manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-evidence
+          path: |
+            go-test.log
+            infra-test.log
+            go.sum
+            go.mod
+            infra/package-lock.json
+            infra/cdk.out/*.template.json
+            bin/
+          retention-days: 7
