@@ -13,9 +13,22 @@ test('IAM, S3 and fleet provisioning security invariants', () => {
   t.hasResourceProperties('AWS::ApiGateway::Method', { HttpMethod: 'POST', AuthorizationType: 'AWS_IAM' });
   const body = JSON.stringify(t.toJSON());
   for (const required of ['credentials-iot:ThingTypeName', 'credentials-iot:ThingName', 'EXCLUSIVE_THING', 'Null', 'aws:SourceArn', 'aws:SourceAccount']) assert.ok(body.includes(required), required);
-  assert.equal(body.includes('s3:*'), false);
-  assert.equal(body.includes('s3:GetObject'), false);
-  assert.equal(body.includes('s3:DeleteObject'), false);
+  // S3's TLS-only bucket policy legitimately uses Deny s3:*. Inspect
+  // identity-policy Allow statements rather than rejecting the secure Deny.
+  for (const type of ['AWS::IAM::Policy', 'AWS::IAM::ManagedPolicy']) {
+    for (const resource of Object.values(t.findResources(type))) {
+      const statements = resource.Properties.PolicyDocument.Statement as Array<{Effect: string; Action: string | string[]}>;
+      for (const statement of statements.filter(s => s.Effect === 'Allow')) {
+        const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+        for (const forbidden of ['s3:*', 's3:GetObject', 's3:DeleteObject']) assert.equal(actions.includes(forbidden), false);
+      }
+    }
+  }
+  t.hasResourceProperties('AWS::S3::BucketPolicy', {
+    PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({
+      Effect: 'Deny', Action: 's3:*', Condition: { Bool: { 'aws:SecureTransport': 'false' } },
+    })]) },
+  });
   t.hasResource('AWS::S3::Bucket', { DeletionPolicy: 'Retain' });
   t.hasResource('AWS::DynamoDB::Table', { DeletionPolicy: 'Retain' });
 });
