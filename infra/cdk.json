@@ -1,0 +1,11 @@
+{
+  "app": "npx tsx bin/app.ts",
+  "context": {
+    "tenants": [
+      "tenant-a",
+      "tenant-b"
+    ],
+    "projectName": "edge-poc",
+    "retentionDays": 0
+  }
+}
